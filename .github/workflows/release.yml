@@ -46,50 +46,81 @@ jobs:
             exit 1
           }
 
-      - name: Create release tag for manual run
+      - name: Ensure release tag for manual run
         if: github.event_name == 'workflow_dispatch'
         env:
-          GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
         shell: bash
         run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists. Refusing to move or overwrite an existing release tag."
-            exit 1
+          git fetch --tags --force
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            TAG_COMMIT="$(git rev-list -n 1 "$TAG")"
+            if [ "$TAG_COMMIT" != "$GITHUB_SHA" ]; then
+              echo "Tag $TAG already exists at $TAG_COMMIT, not this release commit $GITHUB_SHA."
+              echo "Refusing to move an existing release tag."
+              exit 1
+            fi
+            echo "Tag $TAG already points to this commit; resuming release."
+          else
+            git tag "$TAG" "$GITHUB_SHA"
+            git push origin "$TAG"
           fi
-          git tag "$TAG" "$GITHUB_SHA"
-          git push origin "$TAG"
 
       - name: Build and test release
         run: bash ./scripts/build-release.sh
+
+      - name: Locate release artifacts
+        id: artifacts
+        shell: bash
+        run: |
+          echo "dist contents:"
+          find dist -maxdepth 1 -type f -printf '%f\n' | sort
+
+          SDK="$(find dist -maxdepth 1 -type f -name 'LatchSDK-*-windows.zip' -print -quit)"
+          VSIX="$(find dist -maxdepth 1 -type f -name 'latch-language-*.vsix' -print -quit)"
+
+          if [ -z "$SDK" ]; then
+            echo "No Windows Latch SDK ZIP was produced."
+            exit 1
+          fi
+          if [ -z "$VSIX" ]; then
+            echo "No Latch VSIX was produced."
+            exit 1
+          fi
+
+          echo "sdk=$SDK" >> "$GITHUB_OUTPUT"
+          echo "vsix=$VSIX" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
           TAG: ${{ steps.version.outputs.tag }}
+          SDK: ${{ steps.artifacts.outputs.sdk }}
+          VSIX: ${{ steps.artifacts.outputs.vsix }}
         shell: bash
         run: |
           gh release view "$TAG" >/dev/null 2>&1 || \
             gh release create "$TAG" --title "Latch $VERSION" --generate-notes
-          gh release upload "$TAG" \
-            "dist/LatchSDK-$VERSION-windows.zip" \
-            "dist/latch-language-$VERSION.vsix" \
-            --clobber
+          gh release upload "$TAG" "$SDK" "$VSIX" --clobber
 
       - name: Update public release manifest
         if: github.event_name == 'workflow_dispatch'
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          SDK: ${{ steps.artifacts.outputs.sdk }}
+          VSIX: ${{ steps.artifacts.outputs.vsix }}
         shell: bash
         run: |
-          TAG="v$VERSION"
+          SDK_NAME="$(basename "$SDK")"
+          VSIX_NAME="$(basename "$VSIX")"
           cat > release-manifest.json <<EOF
           {
             "version": "$VERSION",
             "channel": "alpha",
-            "downloadUrl": "https://github.com/AirzOverload/Latch/releases/download/$TAG/latch-language-$VERSION.vsix",
-            "sdkUrl": "https://github.com/AirzOverload/Latch/releases/download/$TAG/LatchSDK-$VERSION-windows.zip",
+            "downloadUrl": "https://github.com/AirzOverload/Latch/releases/download/$TAG/$VSIX_NAME",
+            "sdkUrl": "https://github.com/AirzOverload/Latch/releases/download/$TAG/$SDK_NAME",
             "notesUrl": "https://github.com/AirzOverload/Latch/releases/tag/$TAG"
           }
           EOF
