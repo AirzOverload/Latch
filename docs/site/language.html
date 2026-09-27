@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Language — Latch</title><link rel="stylesheet" href="style.css"></head><body><header><img src="../../assets/latch-logo.png"><h1>Language Manual</h1></header><nav><a href="index.html">About</a><a href="language.html">Language</a><a href="api.html">API</a><a href="examples.html">Examples</a><a href="status.html">Status</a></nav><main><h1>Core language</h1><h2>Classes and inheritance</h2><pre>public class Entity {
+    public virtual string describe() { return "Entity"; }
+}
+
+public class Player extends Entity {
+    private int health = 100;
+    public override string describe() { return "Player"; }
+    public void damage(int amount) latch(this.health) {
+        this.health -= amount;
+    }
+}</pre><p>Single class inheritance and inherited/overridden method lookup execute in this alpha. Access-modifier syntax is accepted; full visibility enforcement is still being implemented.</p><h2>Access versus mutation</h2><p><code>public/private/protected/internal</code> answer who may access a symbol. <code>latch</code> answers which state a callable may mutate. They are intentionally independent.</p><h2>Control flow</h2><pre>if (ready) { run(); } else { wait(); }
+while (running) { tick(); }
+for (int i = 0; i < 10; i++) { println(i); }</pre><h2>Operators</h2><div class="card"><p>Arithmetic <code>+ - * / %</code><br>Comparison <code>== != &lt; &lt;= &gt; &gt;=</code><br>Logical <code>&amp;&amp; || !</code><br>Assignment <code>= += -= *= /=</code><br>Update <code>++ --</code></p></div><h2>Imports</h2><pre>import "math.lt";
+int main() { println(twice(21)); return 0; }</pre><p>Quoted relative imports are recursively loaded for multi-file programs.</p></main></body></html>

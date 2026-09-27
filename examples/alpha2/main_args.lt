@@ -1,0 +1,5 @@
+int main(string[] args) {
+    println("argument count: " + len(args));
+    foreach (string arg in args) { println(arg); }
+    return 0;
+}

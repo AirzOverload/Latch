@@ -1,0 +1,17 @@
+int main() {
+    List<int> nums = new List<int>();
+    nums.add(2); nums.add(4); nums.add(6);
+    nums[1] = 9;
+    foreach (int n in nums) {
+        if (n > 2) { println(n); }
+    }
+
+    Map<string,int> scores = new Map<string,int>();
+    scores.set("Ada", 42);
+    println(scores.get("Ada"));
+
+    Set<string> names = new Set<string>();
+    names.add("Peashooter");
+    println(names.contains("Peashooter"));
+    return 0;
+}

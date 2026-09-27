@@ -1,0 +1,1420 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"unicode"
+)
+
+type Tok struct {
+	K, S string
+	L, C int
+}
+type Lexer struct {
+	s       []rune
+	i, l, c int
+}
+
+func lex(src string) ([]Tok, error) {
+	x := &Lexer{s: []rune(src), l: 1, c: 1}
+	var o []Tok
+	for x.i < len(x.s) {
+		r := x.s[x.i]
+		if unicode.IsSpace(r) {
+			x.adv()
+			continue
+		}
+		if r == '/' && x.peek(1) == '/' {
+			for x.i < len(x.s) && x.s[x.i] != '\n' {
+				x.adv()
+			}
+			continue
+		}
+		if r == '/' && x.peek(1) == '*' {
+			x.adv()
+			x.adv()
+			for x.i < len(x.s) && !(x.s[x.i] == '*' && x.peek(1) == '/') {
+				x.adv()
+			}
+			if x.i >= len(x.s) {
+				return nil, fmt.Errorf("%d:%d: unterminated block comment", x.l, x.c)
+			}
+			x.adv()
+			x.adv()
+			continue
+		}
+		l, c := x.l, x.c
+		if unicode.IsLetter(r) || r == '_' {
+			var b strings.Builder
+			for x.i < len(x.s) && (unicode.IsLetter(x.s[x.i]) || unicode.IsDigit(x.s[x.i]) || x.s[x.i] == '_') {
+				b.WriteRune(x.s[x.i])
+				x.adv()
+			}
+			o = append(o, Tok{"id", b.String(), l, c})
+			continue
+		}
+		if unicode.IsDigit(r) {
+			var b strings.Builder
+			dot := false
+			for x.i < len(x.s) && (unicode.IsDigit(x.s[x.i]) || (!dot && x.s[x.i] == '.')) {
+				if x.s[x.i] == '.' {
+					dot = true
+				}
+				b.WriteRune(x.s[x.i])
+				x.adv()
+			}
+			o = append(o, Tok{"num", b.String(), l, c})
+			continue
+		}
+		if r == '"' || r == '\'' {
+			q := r
+			x.adv()
+			var b strings.Builder
+			closed := false
+			for x.i < len(x.s) {
+				r = x.s[x.i]
+				if r == q {
+					x.adv()
+					closed = true
+					break
+				}
+				if r == '\n' {
+					return nil, fmt.Errorf("%d:%d: unterminated string literal", l, c)
+				}
+				if r == '\\' {
+					x.adv()
+					if x.i >= len(x.s) {
+						break
+					}
+					m := map[rune]rune{'n': '\n', 't': '\t', 'r': '\r', '\\': '\\', '"': '"', '\'': '\''}
+					if v, ok := m[x.s[x.i]]; ok {
+						b.WriteRune(v)
+					} else {
+						b.WriteRune(x.s[x.i])
+					}
+					x.adv()
+				} else {
+					b.WriteRune(r)
+					x.adv()
+				}
+			}
+			if !closed {
+				return nil, fmt.Errorf("%d:%d: unterminated string literal", l, c)
+			}
+			k := "str"
+			if q == '\'' {
+				k = "char"
+			}
+			o = append(o, Tok{k, b.String(), l, c})
+			continue
+		}
+		two := string([]rune{r, x.peek(1)})
+		if map[string]bool{"==": true, "!=": true, "<=": true, ">=": true, "&&": true, "||": true, "++": true, "--": true, "+=": true, "-=": true, "*=": true, "/=": true, "%=": true, "->": true, "=>": true, "::": true}[two] {
+			o = append(o, Tok{"sym", two, l, c})
+			x.adv()
+			x.adv()
+			continue
+		}
+		if strings.ContainsRune("+-*/%(){}[];,.=<>!&|?:", r) {
+			o = append(o, Tok{"sym", string(r), l, c})
+			x.adv()
+			continue
+		}
+		return nil, fmt.Errorf("%d:%d: unexpected character %q", l, c, r)
+	}
+	o = append(o, Tok{"eof", "", x.l, x.c})
+	return o, nil
+}
+func (x *Lexer) peek(n int) rune {
+	if x.i+n >= len(x.s) {
+		return 0
+	}
+	return x.s[x.i+n]
+}
+func (x *Lexer) adv() {
+	if x.s[x.i] == '\n' {
+		x.l++
+		x.c = 1
+	} else {
+		x.c++
+	}
+	x.i++
+}
+
+type Expr interface{}
+type Lit struct{ V any }
+type Name struct{ N string }
+type Unary struct {
+	Op string
+	X  Expr
+}
+type Binary struct {
+	Op   string
+	A, B Expr
+}
+type Call struct {
+	F    Expr
+	Args []Expr
+}
+type Member struct {
+	O Expr
+	N string
+}
+type Index struct{ O, I Expr }
+type Array struct{ X []Expr }
+type NewObj struct {
+	N    string
+	Args []Expr
+}
+type Lambda struct {
+	Params []Param
+	Body   []Stmt
+}
+type Stmt interface{}
+type Block struct{ S []Stmt }
+type Var struct {
+	Mod, Type, N string
+	X            Expr
+}
+type ExprStmt struct{ X Expr }
+type If struct {
+	C    Expr
+	T, E Stmt
+}
+type While struct {
+	C Expr
+	B Stmt
+}
+type For struct {
+	Init Stmt
+	C    Expr
+	Post Expr
+	B    Stmt
+}
+type Return struct{ X Expr }
+type Break struct{}
+type Continue struct{}
+type Switch struct {
+	X     Expr
+	Cases []Case
+}
+type Case struct {
+	X   Expr
+	B   []Stmt
+	Def bool
+}
+type Param struct {
+	Type, N string
+	Ref     bool
+}
+type Fn struct {
+	Mod, Name, Ret                             string
+	Params                                     []Param
+	Body                                       []Stmt
+	Latches                                    []string
+	Static, Virtual, Override, Abstract, Final bool
+}
+type Field struct {
+	Mod, Type, N  string
+	Init          Expr
+	Static, Const bool
+}
+type Class struct {
+	Mod, Name, Base string
+	Interfaces      []string
+	Fields          []Field
+	Methods         map[string][]*Fn
+	Abstract, Final bool
+}
+type Interface struct {
+	Name    string
+	Methods map[string][]*Fn
+}
+type Enum struct {
+	Name   string
+	Values []string
+}
+type Program struct {
+	Fns        map[string][]*Fn
+	Classes    map[string]*Class
+	Interfaces map[string]*Interface
+	Enums      map[string]*Enum
+}
+
+type Parser struct {
+	t []Tok
+	i int
+	p *Program
+}
+
+func parse(ts []Tok) (*Program, error) {
+	p := &Parser{t: ts, p: &Program{map[string][]*Fn{}, map[string]*Class{}, map[string]*Interface{}, map[string]*Enum{}}}
+	for !p.is("eof", "") {
+		if p.word("import") || p.word("package") || p.word("namespace") {
+			for !p.sym(";") && !p.is("eof", "") {
+				p.i++
+			}
+			p.takeSym(";")
+			continue
+		}
+		mods := p.mods()
+		if p.word("class") {
+			if err := p.class(mods); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if p.word("interface") {
+			if err := p.iface(); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if p.word("enum") {
+			if err := p.enum(); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		f, err := p.fn(mods)
+		if err != nil {
+			return nil, err
+		}
+		p.p.Fns[f.Name] = append(p.p.Fns[f.Name], f)
+	}
+	return p.p, nil
+}
+func (p *Parser) mods() map[string]bool {
+	m := map[string]bool{}
+	for p.is("id", "") {
+		s := p.cur().S
+		if !strings.Contains(" public private protected internal static const abstract final virtual override ", " "+s+" ") {
+			break
+		}
+		m[s] = true
+		p.i++
+	}
+	return m
+}
+func modstr(m map[string]bool) string {
+	for _, x := range []string{"public", "protected", "internal", "private"} {
+		if m[x] {
+			return x
+		}
+	}
+	return "internal"
+}
+func (p *Parser) class(m map[string]bool) error {
+	p.i++
+	n, err := p.ident()
+	if err != nil {
+		return err
+	}
+	c := &Class{Mod: modstr(m), Name: n, Methods: map[string][]*Fn{}, Abstract: m["abstract"], Final: m["final"]}
+	if p.word("extends") {
+		p.i++
+		c.Base, _ = p.ident()
+	}
+	if p.word("implements") {
+		p.i++
+		for {
+			q, e := p.ident()
+			if e != nil {
+				return e
+			}
+			c.Interfaces = append(c.Interfaces, q)
+			if !p.takeSym(",") {
+				break
+			}
+		}
+	}
+	if !p.takeSym("{") {
+		return p.err("expected '{'")
+	}
+	for !p.takeSym("}") {
+		mm := p.mods()
+		typ, e := p.ident()
+		if e != nil {
+			return e
+		}
+		name, e := p.ident()
+		if e != nil {
+			return e
+		}
+		if p.takeSym("(") {
+			f, e := p.fnTail(mm, typ, name, true)
+			if e != nil {
+				return e
+			}
+			c.Methods[name] = append(c.Methods[name], f)
+		} else {
+			var x Expr
+			if p.takeSym("=") {
+				x, e = p.expr()
+				if e != nil {
+					return e
+				}
+			}
+			if !p.takeSym(";") {
+				return p.err("expected ';' after field")
+			}
+			c.Fields = append(c.Fields, Field{modstr(mm), typ, name, x, mm["static"], mm["const"]})
+		}
+	}
+	p.p.Classes[n] = c
+	return nil
+}
+func (p *Parser) iface() error {
+	p.i++
+	n, e := p.ident()
+	if e != nil {
+		return e
+	}
+	q := &Interface{Name: n, Methods: map[string][]*Fn{}}
+	if !p.takeSym("{") {
+		return p.err("expected '{'")
+	}
+	for !p.takeSym("}") {
+		m := p.mods()
+		f, e := p.fn(m)
+		if e != nil {
+			return e
+		}
+		q.Methods[f.Name] = append(q.Methods[f.Name], f)
+	}
+	p.p.Interfaces[n] = q
+	return nil
+}
+func (p *Parser) enum() error {
+	p.i++
+	n, e := p.ident()
+	if e != nil {
+		return e
+	}
+	if !p.takeSym("{") {
+		return p.err("expected '{'")
+	}
+	q := &Enum{Name: n}
+	for !p.takeSym("}") {
+		v, e := p.ident()
+		if e != nil {
+			return e
+		}
+		q.Values = append(q.Values, v)
+		p.takeSym(",")
+	}
+	p.takeSym(";")
+	p.p.Enums[n] = q
+	return nil
+}
+func (p *Parser) fn(m map[string]bool) (*Fn, error) {
+	ret, e := p.ident()
+	if e != nil {
+		return nil, e
+	}
+	n, e := p.ident()
+	if e != nil {
+		return nil, e
+	}
+	if !p.takeSym("(") {
+		return nil, p.err("expected '('")
+	}
+	return p.fnTail(m, ret, n, false)
+}
+func (p *Parser) fnTail(m map[string]bool, ret, n string, opened bool) (*Fn, error) {
+	f := &Fn{Mod: modstr(m), Name: n, Ret: ret, Static: m["static"], Virtual: m["virtual"], Override: m["override"], Abstract: m["abstract"], Final: m["final"]}
+	if !p.takeSym(")") {
+		for {
+			typ, e := p.ident()
+			if e != nil {
+				return nil, e
+			}
+			ref := p.takeSym("&")
+			pn, e := p.ident()
+			if e != nil {
+				return nil, e
+			}
+			f.Params = append(f.Params, Param{typ, pn, ref})
+			if p.takeSym(")") {
+				break
+			}
+			if !p.takeSym(",") {
+				return nil, p.err("expected ','")
+			}
+		}
+	}
+	if p.word("latch") {
+		p.i++
+		if !p.takeSym("(") {
+			return nil, p.err("expected '(' after latch")
+		}
+		for !p.takeSym(")") {
+			var b strings.Builder
+			for !p.sym(",") && !p.sym(")") {
+				b.WriteString(p.cur().S)
+				p.i++
+			}
+			f.Latches = append(f.Latches, b.String())
+			p.takeSym(",")
+		}
+	}
+	if p.takeSym(";") {
+		f.Abstract = true
+		return f, nil
+	}
+	b, e := p.block()
+	if e != nil {
+		return nil, e
+	}
+	f.Body = b.S
+	return f, nil
+}
+func (p *Parser) block() (*Block, error) {
+	if !p.takeSym("{") {
+		return nil, p.err("expected '{'")
+	}
+	var s []Stmt
+	for !p.takeSym("}") {
+		x, e := p.stmt()
+		if e != nil {
+			return nil, e
+		}
+		s = append(s, x)
+	}
+	return &Block{s}, nil
+}
+func (p *Parser) stmt() (Stmt, error) {
+	if p.sym("{") {
+		return p.block()
+	}
+	if p.word("if") {
+		p.i++
+		p.takeSym("(")
+		c, e := p.expr()
+		if e != nil {
+			return nil, e
+		}
+		if !p.takeSym(")") {
+			return nil, p.err("expected ')'")
+		}
+		t, e := p.stmt()
+		if e != nil {
+			return nil, e
+		}
+		var z Stmt
+		if p.word("else") {
+			p.i++
+			z, e = p.stmt()
+		}
+		return &If{c, t, z}, e
+	}
+	if p.word("while") {
+		p.i++
+		p.takeSym("(")
+		c, e := p.expr()
+		if e != nil {
+			return nil, e
+		}
+		p.takeSym(")")
+		b, e := p.stmt()
+		return &While{c, b}, e
+	}
+	if p.word("for") {
+		p.i++
+		p.takeSym("(")
+		var init Stmt
+		var e error
+		if !p.sym(";") {
+			if p.looksVar() {
+				init, e = p.varstmt()
+			} else {
+				x, _ := p.expr()
+				p.takeSym(";")
+				init = &ExprStmt{x}
+			}
+		} else {
+			p.i++
+		}
+		if e != nil {
+			return nil, e
+		}
+		var c Expr
+		if !p.sym(";") {
+			c, e = p.expr()
+		}
+		p.takeSym(";")
+		var post Expr
+		if !p.sym(")") {
+			post, e = p.expr()
+		}
+		p.takeSym(")")
+		b, e := p.stmt()
+		return &For{init, c, post, b}, e
+	}
+	if p.word("return") {
+		p.i++
+		var x Expr
+		var e error
+		if !p.sym(";") {
+			x, e = p.expr()
+		}
+		p.takeSym(";")
+		return &Return{x}, e
+	}
+	if p.word("break") {
+		p.i++
+		p.takeSym(";")
+		return Break{}, nil
+	}
+	if p.word("continue") {
+		p.i++
+		p.takeSym(";")
+		return Continue{}, nil
+	}
+	if p.looksVar() {
+		return p.varstmt()
+	}
+	x, e := p.expr()
+	if e != nil {
+		return nil, e
+	}
+	if !p.takeSym(";") {
+		return nil, p.err("expected ';'")
+	}
+	return &ExprStmt{x}, nil
+}
+func (p *Parser) looksVar() bool {
+	return p.is("id", "") && p.i+1 < len(p.t) && (p.t[p.i+1].K == "id" || p.t[p.i+1].S == "[")
+}
+func (p *Parser) varstmt() (Stmt, error) {
+	m := p.mods()
+	typ, e := p.ident()
+	if e != nil {
+		return nil, e
+	}
+	if p.takeSym("[") {
+		p.takeSym("]")
+		typ += "[]"
+	}
+	n, e := p.ident()
+	if e != nil {
+		return nil, e
+	}
+	var x Expr
+	if p.takeSym("=") {
+		x, e = p.expr()
+	}
+	if !p.takeSym(";") {
+		return nil, p.err("expected ';'")
+	}
+	return &Var{modstr(m), typ, n, x}, e
+}
+
+var prec = map[string]int{"=": 1, "+=": 1, "-=": 1, "*=": 1, "/=": 1, "||": 2, "&&": 3, "==": 4, "!=": 4, "<": 5, "<=": 5, ">": 5, ">=": 5, "+": 6, "-": 6, "*": 7, "/": 7, "%": 7}
+
+func (p *Parser) expr() (Expr, error) { return p.bin(1) }
+func (p *Parser) bin(min int) (Expr, error) {
+	a, e := p.unary()
+	if e != nil {
+		return nil, e
+	}
+	for {
+		op := p.cur().S
+		pr := prec[op]
+		if pr < min {
+			break
+		}
+		p.i++
+		b, e := p.bin(pr + 1)
+		if e != nil {
+			return nil, e
+		}
+		a = &Binary{op, a, b}
+	}
+	return a, nil
+}
+func (p *Parser) unary() (Expr, error) {
+	if p.sym("!") || p.sym("-") || p.sym("+") {
+		op := p.cur().S
+		p.i++
+		x, e := p.unary()
+		return &Unary{op, x}, e
+	}
+	return p.post()
+}
+func (p *Parser) post() (Expr, error) {
+	x, e := p.primary()
+	if e != nil {
+		return nil, e
+	}
+	for {
+		if p.takeSym("(") {
+			var a []Expr
+			if !p.takeSym(")") {
+				for {
+					q, e := p.expr()
+					if e != nil {
+						return nil, e
+					}
+					a = append(a, q)
+					if p.takeSym(")") {
+						break
+					}
+					p.takeSym(",")
+				}
+			}
+			x = &Call{x, a}
+			continue
+		}
+		if p.takeSym(".") {
+			n, e := p.ident()
+			if e != nil {
+				return nil, e
+			}
+			x = &Member{x, n}
+			continue
+		}
+		if p.takeSym("[") {
+			i, e := p.expr()
+			if e != nil {
+				return nil, e
+			}
+			p.takeSym("]")
+			x = &Index{x, i}
+			continue
+		}
+		if p.sym("++") || p.sym("--") {
+			op := p.cur().S
+			p.i++
+			x = &Binary{strings.TrimSuffix(op, "+") + "=", x, &Lit{1}}
+			continue
+		}
+		break
+	}
+	return x, nil
+}
+func (p *Parser) primary() (Expr, error) {
+	t := p.cur()
+	if t.K == "num" {
+		p.i++
+		if strings.Contains(t.S, ".") {
+			v, _ := strconv.ParseFloat(t.S, 64)
+			return &Lit{v}, nil
+		}
+		v, _ := strconv.Atoi(t.S)
+		return &Lit{v}, nil
+	}
+	if t.K == "str" || t.K == "char" {
+		p.i++
+		return &Lit{t.S}, nil
+	}
+	if p.word("true") {
+		p.i++
+		return &Lit{true}, nil
+	}
+	if p.word("false") {
+		p.i++
+		return &Lit{false}, nil
+	}
+	if p.word("null") {
+		p.i++
+		return &Lit{nil}, nil
+	}
+	if p.word("new") {
+		p.i++
+		n, e := p.ident()
+		if e != nil {
+			return nil, e
+		}
+		p.takeSym("(")
+		var a []Expr
+		if !p.takeSym(")") {
+			for {
+				q, _ := p.expr()
+				a = append(a, q)
+				if p.takeSym(")") {
+					break
+				}
+				p.takeSym(",")
+			}
+		}
+		return &NewObj{n, a}, nil
+	}
+	if p.takeSym("[") {
+		var a []Expr
+		if !p.takeSym("]") {
+			for {
+				q, e := p.expr()
+				if e != nil {
+					return nil, e
+				}
+				a = append(a, q)
+				if p.takeSym("]") {
+					break
+				}
+				p.takeSym(",")
+			}
+		}
+		return &Array{a}, nil
+	}
+	if p.takeSym("(") {
+		x, e := p.expr()
+		p.takeSym(")")
+		return x, e
+	}
+	if t.K == "id" {
+		p.i++
+		return &Name{t.S}, nil
+	}
+	return nil, p.err("expected expression")
+}
+func (p *Parser) cur() Tok            { return p.t[p.i] }
+func (p *Parser) is(k, s string) bool { t := p.cur(); return t.K == k && (s == "" || t.S == s) }
+func (p *Parser) word(s string) bool  { return p.is("id", s) }
+func (p *Parser) sym(s string) bool   { return p.is("sym", s) }
+func (p *Parser) takeSym(s string) bool {
+	if p.sym(s) {
+		p.i++
+		return true
+	}
+	return false
+}
+func (p *Parser) ident() (string, error) {
+	if !p.is("id", "") {
+		return "", p.err("expected identifier")
+	}
+	s := p.cur().S
+	p.i++
+	return s, nil
+}
+func (p *Parser) err(s string) error {
+	t := p.cur()
+	return fmt.Errorf("%d:%d: %s, got %q", t.L, t.C, s, t.S)
+}
+
+type Obj struct {
+	Class  *Class
+	Fields map[string]any
+}
+type Bound struct {
+	O *Obj
+	F *Fn
+}
+type Env struct {
+	P *Env
+	V map[string]any
+}
+
+func (e *Env) get(n string) (any, bool) {
+	for q := e; q != nil; q = q.P {
+		v, ok := q.V[n]
+		if ok {
+			return v, true
+		}
+	}
+	return nil, false
+}
+func (e *Env) set(n string, v any) bool {
+	for q := e; q != nil; q = q.P {
+		if _, ok := q.V[n]; ok {
+			q.V[n] = v
+			return true
+		}
+	}
+	return false
+}
+
+type Flow struct {
+	K string
+	V any
+}
+type VM struct {
+	P       *Program
+	Out     *os.File
+	Current *Fn
+	This    *Obj
+	Latch   map[string]bool
+}
+
+func (v *VM) run() error {
+	fs := v.P.Fns["main"]
+	if len(fs) == 0 {
+		return errors.New("no main() function")
+	}
+	_, e := v.callFn(fs[0], nil, nil)
+	return e
+}
+func (v *VM) callFn(f *Fn, args []any, this *Obj) (any, error) {
+	if f.Abstract {
+		return nil, fmt.Errorf("cannot call abstract function %s", f.Name)
+	}
+	e := &Env{V: map[string]any{}}
+	for i, p := range f.Params {
+		if i < len(args) {
+			e.V[p.N] = args[i]
+		} else {
+			e.V[p.N] = nil
+		}
+	}
+	oldF, oldT, oldL := v.Current, v.This, v.Latch
+	v.Current, v.This, v.Latch = f, this, map[string]bool{}
+	for _, x := range f.Latches {
+		v.Latch[x] = true
+	}
+	if this != nil {
+		e.V["this"] = this
+	}
+	fl, er := v.execList(f.Body, e)
+	v.Current, v.This, v.Latch = oldF, oldT, oldL
+	if er != nil {
+		return nil, er
+	}
+	if fl != nil && fl.K == "return" {
+		return fl.V, nil
+	}
+	return nil, nil
+}
+func (v *VM) execList(ss []Stmt, e *Env) (*Flow, error) {
+	for _, s := range ss {
+		f, er := v.exec(s, e)
+		if er != nil {
+			return nil, er
+		}
+		if f != nil {
+			return f, nil
+		}
+	}
+	return nil, nil
+}
+func (v *VM) exec(s Stmt, e *Env) (*Flow, error) {
+	switch q := s.(type) {
+	case *Block:
+		return v.execList(q.S, &Env{P: e, V: map[string]any{}})
+	case *Var:
+		var x any
+		var er error
+		if q.X != nil {
+			x, er = v.eval(q.X, e)
+		}
+		if er != nil {
+			return nil, er
+		}
+		e.V[q.N] = x
+		return nil, nil
+	case *ExprStmt:
+		_, er := v.eval(q.X, e)
+		return nil, er
+	case *If:
+		c, er := v.eval(q.C, e)
+		if er != nil {
+			return nil, er
+		}
+		if truth(c) {
+			return v.exec(q.T, e)
+		} else if q.E != nil {
+			return v.exec(q.E, e)
+		}
+	case *While:
+		for {
+			c, er := v.eval(q.C, e)
+			if er != nil {
+				return nil, er
+			}
+			if !truth(c) {
+				break
+			}
+			f, er := v.exec(q.B, e)
+			if er != nil {
+				return nil, er
+			}
+			if f != nil {
+				if f.K == "break" {
+					break
+				}
+				if f.K == "continue" {
+					continue
+				}
+				return f, nil
+			}
+		}
+	case *For:
+		ne := &Env{P: e, V: map[string]any{}}
+		if q.Init != nil {
+			v.exec(q.Init, ne)
+		}
+		for {
+			if q.C != nil {
+				c, er := v.eval(q.C, ne)
+				if er != nil {
+					return nil, er
+				}
+				if !truth(c) {
+					break
+				}
+			}
+			f, er := v.exec(q.B, ne)
+			if er != nil {
+				return nil, er
+			}
+			if f != nil && f.K == "break" {
+				break
+			}
+			if f != nil && f.K == "return" {
+				return f, nil
+			}
+			if q.Post != nil {
+				v.eval(q.Post, ne)
+			}
+		}
+	case *Return:
+		var x any
+		var er error
+		if q.X != nil {
+			x, er = v.eval(q.X, e)
+		}
+		return &Flow{"return", x}, er
+	case Break:
+		return &Flow{"break", nil}, nil
+	case Continue:
+		return &Flow{"continue", nil}, nil
+	}
+	return nil, nil
+}
+func (v *VM) eval(x Expr, e *Env) (any, error) {
+	switch q := x.(type) {
+	case *Lit:
+		return q.V, nil
+	case *Name:
+		if z, ok := e.get(q.N); ok {
+			return z, nil
+		}
+		if fs := v.P.Fns[q.N]; len(fs) > 0 {
+			return fs, nil
+		}
+		if c := v.P.Classes[q.N]; c != nil {
+			return c, nil
+		}
+		return nil, fmt.Errorf("undefined name %s", q.N)
+	case *Array:
+		var a []any
+		for _, x := range q.X {
+			z, er := v.eval(x, e)
+			if er != nil {
+				return nil, er
+			}
+			a = append(a, z)
+		}
+		return a, nil
+	case *Unary:
+		z, er := v.eval(q.X, e)
+		if er != nil {
+			return nil, er
+		}
+		switch q.Op {
+		case "!":
+			return !truth(z), nil
+		case "-":
+			return -num(z), nil
+		case "+":
+			return num(z), nil
+		}
+	case *Binary:
+		if strings.HasSuffix(q.Op, "=") {
+			return v.assign(q, e)
+		}
+		a, er := v.eval(q.A, e)
+		if er != nil {
+			return nil, er
+		}
+		if q.Op == "&&" && !truth(a) {
+			return false, nil
+		}
+		if q.Op == "||" && truth(a) {
+			return true, nil
+		}
+		b, er := v.eval(q.B, e)
+		if er != nil {
+			return nil, er
+		}
+		return op(q.Op, a, b)
+	case *Member:
+		o, er := v.eval(q.O, e)
+		if er != nil {
+			return nil, er
+		}
+		if z, ok := o.(*Obj); ok {
+			if x, ok := z.Fields[q.N]; ok {
+				return x, nil
+			}
+			if f := findMethod(v.P, z.Class, q.N); f != nil {
+				return &Bound{z, f}, nil
+			}
+			return nil, fmt.Errorf("%s has no member %s", z.Class.Name, q.N)
+		}
+		return nil, fmt.Errorf("member access on non-object")
+	case *Index:
+		o, er := v.eval(q.O, e)
+		if er != nil {
+			return nil, er
+		}
+		i, er := v.eval(q.I, e)
+		if er != nil {
+			return nil, er
+		}
+		n := int(num(i))
+		switch a := o.(type) {
+		case []any:
+			if n < 0 || n >= len(a) {
+				return nil, fmt.Errorf("array index out of range")
+			}
+			return a[n], nil
+		case string:
+			r := []rune(a)
+			if n < 0 || n >= len(r) {
+				return nil, fmt.Errorf("string index out of range")
+			}
+			return string(r[n]), nil
+		}
+	case *NewObj:
+		return v.newObj(q.N, q.Args, e)
+	case *Call:
+		if n, ok := q.F.(*Name); ok && (n.N == "print" || n.N == "println" || n.N == "len" || n.N == "str" || n.N == "int" || n.N == "float") {
+			var a []any
+			for _, x := range q.Args {
+				z, er := v.eval(x, e)
+				if er != nil {
+					return nil, er
+				}
+				a = append(a, z)
+			}
+			return v.builtin(n.N, a)
+		}
+		var a []any
+		for _, x := range q.Args {
+			z, er := v.eval(x, e)
+			if er != nil {
+				return nil, er
+			}
+			a = append(a, z)
+		}
+		f, er := v.eval(q.F, e)
+		if er != nil {
+			return nil, er
+		}
+		switch z := f.(type) {
+		case []*Fn:
+			return v.callFn(resolve(z, len(a)), a, nil)
+		case *Bound:
+			return v.callFn(z.F, a, z.O)
+		case *Class:
+			return v.newObj(z.Name, q.Args, e)
+		case string:
+			_ = z
+		}
+		if n, ok := q.F.(*Name); ok {
+			return v.builtin(n.N, a)
+		}
+		return nil, fmt.Errorf("value is not callable")
+	}
+	return nil, fmt.Errorf("unsupported expression")
+}
+func (v *VM) assign(q *Binary, e *Env) (any, error) {
+	rhs, er := v.eval(q.B, e)
+	if er != nil {
+		return nil, er
+	}
+	apply := func(old any) (any, error) {
+		if q.Op == "=" {
+			return rhs, nil
+		}
+		return op(strings.TrimSuffix(q.Op, "="), old, rhs)
+	}
+	switch a := q.A.(type) {
+	case *Name:
+		old, _ := e.get(a.N)
+		nv, er := apply(old)
+		if er == nil && !e.set(a.N, nv) {
+			e.V[a.N] = nv
+		}
+		return nv, er
+	case *Member:
+		o, er := v.eval(a.O, e)
+		if er != nil {
+			return nil, er
+		}
+		z, ok := o.(*Obj)
+		if !ok {
+			return nil, fmt.Errorf("assignment target is not object")
+		}
+		old := z.Fields[a.N]
+		nv, er := apply(old)
+		if er != nil {
+			return nil, er
+		}
+		if v.Current != nil && v.This == z {
+			allowed := v.Latch["this."+a.N]
+			if !allowed {
+				return nil, fmt.Errorf("mutation of this.%s requires latch(this.%s)", a.N, a.N)
+			}
+		}
+		z.Fields[a.N] = nv
+		return nv, nil
+	case *Index:
+		return nil, fmt.Errorf("indexed assignment not yet supported")
+	}
+	return nil, fmt.Errorf("invalid assignment target")
+}
+func (v *VM) newObj(n string, args []Expr, e *Env) (any, error) {
+	c := v.P.Classes[n]
+	if c == nil {
+		return nil, fmt.Errorf("unknown class %s", n)
+	}
+	if c.Abstract {
+		return nil, fmt.Errorf("cannot instantiate abstract class %s", n)
+	}
+	o := &Obj{c, map[string]any{}}
+	for _, f := range allFields(v.P, c) {
+		var z any
+		if f.Init != nil {
+			z, _ = v.eval(f.Init, e)
+		}
+		o.Fields[f.N] = z
+	}
+	if fs := c.Methods[n]; len(fs) > 0 {
+		var a []any
+		for _, x := range args {
+			z, er := v.eval(x, e)
+			if er != nil {
+				return nil, er
+			}
+			a = append(a, z)
+		}
+		v.callFn(resolve(fs, len(a)), a, o)
+	}
+	return o, nil
+}
+func (v *VM) builtin(n string, a []any) (any, error) {
+	switch n {
+	case "print":
+		for _, x := range a {
+			fmt.Fprint(v.Out, show(x))
+		}
+		return nil, nil
+	case "println":
+		for _, x := range a {
+			fmt.Fprint(v.Out, show(x))
+		}
+		fmt.Fprintln(v.Out)
+		return nil, nil
+	case "len":
+		if len(a) != 1 {
+			return nil, fmt.Errorf("len expects 1 argument")
+		}
+		switch z := a[0].(type) {
+		case []any:
+			return len(z), nil
+		case string:
+			return len([]rune(z)), nil
+		}
+	case "str":
+		if len(a) == 1 {
+			return show(a[0]), nil
+		}
+	case "int":
+		if len(a) == 1 {
+			return int(num(a[0])), nil
+		}
+	case "float":
+		if len(a) == 1 {
+			return num(a[0]), nil
+		}
+	}
+	return nil, fmt.Errorf("unknown function %s", n)
+}
+func resolve(fs []*Fn, n int) *Fn {
+	for _, f := range fs {
+		if len(f.Params) == n {
+			return f
+		}
+	}
+	return fs[0]
+}
+func findMethod(p *Program, c *Class, n string) *Fn {
+	for q := c; q != nil; {
+		if fs := q.Methods[n]; len(fs) > 0 {
+			return fs[0]
+		}
+		if q.Base == "" {
+			break
+		}
+		q = p.Classes[q.Base]
+	}
+	return nil
+}
+
+func allFields(p *Program, c *Class) []Field {
+	var a []Field
+	if c.Base != "" && p.Classes[c.Base] != nil {
+		a = append(a, allFields(p, p.Classes[c.Base])...)
+	}
+	return append(a, c.Fields...)
+}
+func truth(x any) bool {
+	switch z := x.(type) {
+	case bool:
+		return z
+	case nil:
+		return false
+	case int:
+		return z != 0
+	case float64:
+		return z != 0
+	case string:
+		return z != ""
+	}
+	return true
+}
+func num(x any) float64 {
+	switch z := x.(type) {
+	case int:
+		return float64(z)
+	case float64:
+		return z
+	case bool:
+		if z {
+			return 1
+		}
+	}
+	return 0
+}
+func show(x any) string {
+	switch z := x.(type) {
+	case nil:
+		return "null"
+	case float64:
+		if z == float64(int(z)) {
+			return strconv.Itoa(int(z))
+		}
+		return strconv.FormatFloat(z, 'g', -1, 64)
+	case *Obj:
+		return z.Class.Name
+	default:
+		return fmt.Sprint(z)
+	}
+}
+func op(o string, a, b any) (any, error) {
+	if o == "+" {
+		if _, ok := a.(string); ok {
+			return show(a) + show(b), nil
+		}
+		if _, ok := b.(string); ok {
+			return show(a) + show(b), nil
+		}
+	}
+	switch o {
+	case "+":
+		return num(a) + num(b), nil
+	case "-":
+		return num(a) - num(b), nil
+	case "*":
+		return num(a) * num(b), nil
+	case "/":
+		if num(b) == 0 {
+			return nil, errors.New("division by zero")
+		}
+		return num(a) / num(b), nil
+	case "%":
+		return int(num(a)) % int(num(b)), nil
+	case "==":
+		return show(a) == show(b), nil
+	case "!=":
+		return show(a) != show(b), nil
+	case "<":
+		return num(a) < num(b), nil
+	case "<=":
+		return num(a) <= num(b), nil
+	case ">":
+		return num(a) > num(b), nil
+	case ">=":
+		return num(a) >= num(b), nil
+	case "&&":
+		return truth(a) && truth(b), nil
+	case "||":
+		return truth(a) || truth(b), nil
+	}
+	return nil, fmt.Errorf("unsupported operator %s", o)
+}
+
+func load(path string, seen map[string]bool) (string, error) {
+	abs, _ := filepath.Abs(path)
+	if seen[abs] {
+		return "", nil
+	}
+	seen[abs] = true
+	b, e := os.ReadFile(abs)
+	if e != nil {
+		return "", e
+	}
+	src := string(b)
+	dir := filepath.Dir(abs)
+	re := strings.Split(src, "\n")
+	var pre strings.Builder
+	for _, ln := range re {
+		t := strings.TrimSpace(ln)
+		if strings.HasPrefix(t, "import ") {
+			q := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(t, "import "), ";"))
+			q = strings.Trim(q, "\"")
+			if !strings.HasSuffix(q, ".lt") {
+				q = strings.ReplaceAll(q, ".", string(os.PathSeparator)) + ".lt"
+			}
+			s, e := load(filepath.Join(dir, q), seen)
+			if e != nil {
+				return "", e
+			}
+			pre.WriteString(s)
+			pre.WriteByte('\n')
+		} else {
+			pre.WriteString(ln)
+			pre.WriteByte('\n')
+		}
+	}
+	return pre.String(), nil
+}
+func main() {
+	if len(os.Args) < 3 {
+		fmt.Println("Latch 1.0\nusage: latch <run|check> <file.lt>")
+		return
+	}
+	src, e := load(os.Args[2], map[string]bool{})
+	if e != nil {
+		fmt.Fprintln(os.Stderr, "Latch error:", e)
+		os.Exit(1)
+	}
+	ts, e := lex(src)
+	if e != nil {
+		fmt.Fprintln(os.Stderr, "Latch error:", e)
+		os.Exit(1)
+	}
+	p, e := parse(ts)
+	if e != nil {
+		fmt.Fprintln(os.Stderr, "Latch error:", e)
+		os.Exit(1)
+	}
+	if os.Args[1] == "check" {
+		fmt.Println("Latch check passed.")
+		return
+	}
+	if os.Args[1] != "run" {
+		fmt.Fprintln(os.Stderr, "Latch error: unknown command")
+		os.Exit(1)
+	}
+	v := &VM{P: p, Out: os.Stdout}
+	if e = v.run(); e != nil {
+		fmt.Fprintln(os.Stderr, "Latch error:", e)
+		os.Exit(1)
+	}
+}

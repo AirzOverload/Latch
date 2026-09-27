@@ -1,0 +1,82 @@
+{
+  "scopeName": "source.latch",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#numbers"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.documentation.latch",
+          "match": "///.*$"
+        },
+        {
+          "name": "comment.line.double-slash.latch",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.latch",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.latch",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.latch",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.latch",
+          "match": "\\b(if|else|for|foreach|in|while|break|continue|return|class|interface|enum|extends|implements|new|import|package|namespace|latch|public|private|protected|internal|static|const|abstract|final|virtual|override|this|super|true|false|null)\\b"
+        },
+        {
+          "name": "keyword.other.incomplete.latch",
+          "match": "\\b(?:p|pu|pub|publ|publi|pr|pri|priv|priva|privat|pro|prot|prote|protec|protecte|cl|cla|clas|ret|retu|retur|ov|ove|over|overr|overri|overrid|lat|latc|fo|for|fore|forea|foreac)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.latch",
+          "match": "\\b(int|float|bool|char|string|void|List|Map|Set)\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.latch",
+          "match": "\\b[0-9]+(?:\\.[0-9]+)?\\b"
+        }
+      ]
+    }
+  }
+}

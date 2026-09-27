@@ -1,0 +1,16 @@
+public class MyClass {
+    private string message;
+
+    MyClass(string message) {
+        this.message = message; // constructors have initialization authority
+        println("My class is ready");
+    }
+
+    public string describe() { return this.message; }
+}
+
+int main() {
+    MyClass mc = new MyClass("Hi");
+    println(mc.describe());
+    return 0;
+}

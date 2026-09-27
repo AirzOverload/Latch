@@ -1,0 +1,9 @@
+class Outer {
+    public class Inner {
+        Inner() { println("Inner ready"); }
+    }
+}
+int main() {
+    Outer.Inner value = new Outer.Inner();
+    return 0;
+}

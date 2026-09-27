@@ -1,0 +1,162 @@
+{
+  "name": "latch-language",
+  "displayName": "Latch Language",
+  "description": "Language support for Latch",
+  "version": "1.0.0-alpha.2.5",
+  "publisher": "latch-lang",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./extension.js",
+  "icon": "icon.png",
+  "activationEvents": [
+    "onLanguage:latch",
+    "onCommand:latch.newProject",
+    "onCommand:latch.newFile",
+    "onCommand:latch.run",
+    "onCommand:latch.check",
+    "onCommand:latch.docs",
+    "onCommand:latch.enableIcons",
+    "onCommand:latch.checkUpdates"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "latch",
+        "aliases": [
+          "Latch",
+          "latch"
+        ],
+        "extensions": [
+          ".lt"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/lt.svg",
+          "dark": "./icons/lt.svg"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "latch",
+        "scopeName": "source.latch",
+        "path": "./syntaxes/latch.tmLanguage.json"
+      }
+    ],
+    "iconThemes": [
+      {
+        "id": "latch-lt-icons",
+        "label": "Latch LT File Icons",
+        "path": "./icons/icon-theme.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "latch.newProject",
+        "title": "New Latch Project",
+        "category": "Latch",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "latch.newFile",
+        "title": "Latch File",
+        "category": "New File",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "latch.run",
+        "title": "Run Latch Program",
+        "category": "Latch",
+        "icon": "$(play)"
+      },
+      {
+        "command": "latch.check",
+        "title": "Check Current File",
+        "category": "Latch",
+        "icon": "$(check)"
+      },
+      {
+        "command": "latch.docs",
+        "title": "Open Documentation",
+        "category": "Latch",
+        "icon": "$(book)"
+      },
+      {
+        "command": "latch.enableIcons",
+        "title": "Enable LT File Icons",
+        "category": "Latch",
+        "icon": "$(symbol-color)"
+      },
+      {
+        "command": "latch.checkUpdates",
+        "title": "Check for Latch Updates",
+        "category": "Latch",
+        "icon": "$(cloud-download)"
+      }
+    ],
+    "menus": {
+      "file/newFile": [
+        {
+          "command": "latch.newProject",
+          "group": "file@4"
+        },
+        {
+          "command": "latch.newFile",
+          "group": "file@5"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "latch.run",
+          "when": "resourceLangId == latch",
+          "group": "navigation@1"
+        }
+      ],
+      "editor/title/run": [
+        {
+          "command": "latch.run",
+          "when": "resourceLangId == latch",
+          "group": "run@1"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "latch.run",
+          "when": "resourceLangId == latch",
+          "group": "navigation@1"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "latch.run",
+          "when": "resourceExtname == .lt",
+          "group": "navigation@1"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Latch",
+      "properties": {
+        "latch.liveDiagnostics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Check Latch files as you edit and publish diagnostics to the Problems panel."
+        },
+        "latch.autoCheckUpdates": {
+          "type": "boolean",
+          "default": true,
+          "description": "Check the configured Latch release manifest for updates when VS Code starts."
+        },
+        "latch.releaseManifestUrl": {
+          "type": "string",
+          "default": "https://raw.githubusercontent.com/AirzOverload/Latch/main/release-manifest.json",
+          "description": "HTTPS URL of the Latch release manifest."
+        }
+      }
+    }
+  }
+}

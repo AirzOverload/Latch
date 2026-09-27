@@ -1,0 +1,6 @@
+/// Returns the absolute value of an integer.
+public int absInt(int value) { if (value < 0) { return -value; } return value; }
+/// Returns value squared.
+public int squareInt(int value) { return value * value; }
+/// Clamps an integer to the inclusive range [minimum, maximum].
+public int clampInt(int value, int minimum, int maximum) { if (value < minimum) { return minimum; } if (value > maximum) { return maximum; } return value; }

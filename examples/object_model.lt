@@ -1,0 +1,29 @@
+// Latch 1.0 alpha: executable object-model example.
+public class Entity {
+    public virtual string describe() { return "Entity"; }
+}
+
+public class Player extends Entity {
+    private int health = 100;
+
+    public override string describe() { return "Player"; }
+
+    // Mutation authority is explicit even inside a method.
+    public void damage(int amount) latch(this.health) {
+        this.health -= amount;
+    }
+
+    public int getHealth() { return this.health; }
+}
+
+int main() {
+    Player p = new Player();
+    println(p.describe());
+    p.damage(25);
+    println(p.getHealth());
+
+    for (int i = 0; i < 3; i++) {
+        println(i);
+    }
+    return 0;
+}

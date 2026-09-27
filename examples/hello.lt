@@ -1,0 +1,4 @@
+int main() {
+    println("Hello from Latch 1.0 alpha!");
+    return 0;
+}

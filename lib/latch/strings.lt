@@ -1,0 +1,2 @@
+/// Returns true when the string has no characters.
+public bool isEmpty(string value) { return len(value) == 0; }
