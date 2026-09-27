@@ -1,11 +1,14 @@
 name: Build and publish Latch
+
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
+
 permissions:
   contents: write
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -13,37 +16,89 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Read VERSION
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(tr -d '\r\n ' < VERSION)"
+          if [ -z "$VERSION" ]; then
+            echo "VERSION is empty"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Verify tag matches VERSION
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
-          test "${GITHUB_REF_NAME}" = "v$(tr -d '\r\n ' < VERSION)" || { echo "Tag and VERSION disagree"; exit 1; }
+          test "${GITHUB_REF_NAME}" = "${{ steps.version.outputs.tag }}" || {
+            echo "Tag ${GITHUB_REF_NAME} and VERSION ${{ steps.version.outputs.version }} disagree"
+            exit 1
+          }
+
+      - name: Create release tag for manual run
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists. Refusing to move or overwrite an existing release tag."
+            exit 1
+          fi
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "$TAG"
+
       - name: Build and test release
         run: bash ./scripts/build-release.sh
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
         run: |
-          VERSION="$(tr -d '\r\n ' < VERSION)"
-          TAG="v$VERSION"
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Latch $VERSION" --generate-notes
-          gh release upload "$TAG" dist/*.vsix dist/*.zip --clobber
-      - name: Update public release manifest on main
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --title "Latch $VERSION" --generate-notes
+          gh release upload "$TAG" \
+            "dist/LatchSDK-$VERSION-windows.zip" \
+            "dist/latch-language-$VERSION.vsix" \
+            --clobber
+
+      - name: Update public release manifest
+        if: github.event_name == 'workflow_dispatch'
         env:
-          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
         run: |
-          git fetch origin main
-          git checkout main
-          cp dist/release-manifest.json release-manifest.json
-          if git diff --quiet -- release-manifest.json; then exit 0; fi
+          TAG="v$VERSION"
+          cat > release-manifest.json <<EOF
+          {
+            "version": "$VERSION",
+            "channel": "alpha",
+            "downloadUrl": "https://github.com/AirzOverload/Latch/releases/download/$TAG/latch-language-$VERSION.vsix",
+            "sdkUrl": "https://github.com/AirzOverload/Latch/releases/download/$TAG/LatchSDK-$VERSION-windows.zip",
+            "notesUrl": "https://github.com/AirzOverload/Latch/releases/tag/$TAG"
+          }
+          EOF
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add release-manifest.json
-          git commit -m "Update Latch release manifest to $(cat VERSION)"
-          git push origin main
+          if git diff --cached --quiet; then
+            echo "Manifest already current."
+          else
+            git commit -m "Update release manifest for $VERSION"
+            git push origin HEAD:main
+          fi
