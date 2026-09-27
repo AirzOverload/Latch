@@ -25,7 +25,7 @@ jobs:
         run: |
           test "${GITHUB_REF_NAME}" = "v$(tr -d '\r\n ' < VERSION)" || { echo "Tag and VERSION disagree"; exit 1; }
       - name: Build and test release
-        run: ./scripts/build-release.sh
+        run: bash ./scripts/build-release.sh
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
