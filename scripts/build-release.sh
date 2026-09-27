@@ -4,10 +4,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 VERSION="$(tr -d '\r\n ' < VERSION)"
 TAG="v$VERSION"
-SDK_NAME="LatchSDK-1.0-alpha2.5-windows.zip"
+SDK_NAME="LatchSDK-1.0-alpha2.6-windows.zip"
 VSIX_NAME="latch-language-$VERSION.vsix"
 rm -rf build dist
-mkdir -p build/sdk/LatchSDK-1.0-alpha2.5/bin build/sdk/LatchSDK-1.0-alpha2.5/vscode-latch dist
+mkdir -p build/sdk/LatchSDK-1.0-alpha2.6/bin build/sdk/LatchSDK-1.0-alpha2.6/vscode-latch dist
 
 # Compiler: native Windows x64, no external runtime required.
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o build/latch.exe ./compiler-src/main.go
@@ -20,6 +20,21 @@ printf 'int main() { println("ok"); return 0; }\n' > build/good.lt
 printf 'int main() { UnknownThing x; println("MUST_NOT_RUN"); return 0; }\n' > build/bad.lt
 if ./build/latch-test run build/bad.lt >build/bad.out 2>build/bad.err; then echo 'negative semantic test unexpectedly passed'; exit 1; fi
 if grep -q 'MUST_NOT_RUN' build/bad.out; then echo 'invalid program executed'; exit 1; fi
+
+# Alpha 2.6 type API and Unicode char gates.
+cat > build/type-api.lt <<'EOF'
+int main() { char c = 'λ'; string s = "Latch"; println(c.isLetter()); println(s.length); println(s.toUpper()); println(s.substring(0, 3)); println(s.charAt(0)); return 0; }
+EOF
+./build/latch-test check build/type-api.lt | grep -q 'Latch check passed.'
+printf 'true\n5\nLATCH\nLat\nL\n' > build/type-api.expected
+./build/latch-test run build/type-api.lt > build/type-api.out
+diff -u build/type-api.expected build/type-api.out
+printf "int main() { int x = 'A'; return 0; }\n" > build/char-type-error.lt
+if ./build/latch-test check build/char-type-error.lt >build/char-type.out 2>&1; then echo 'char/int mismatch unexpectedly passed'; exit 1; fi
+grep -q 'cannot initialize int with char' build/char-type.out
+printf "int main() { char x = 'AB'; return 0; }\n" > build/bad-char.lt
+if ./build/latch-test check build/bad-char.lt >build/bad-char.out 2>&1; then echo 'multi-code-point char unexpectedly passed'; exit 1; fi
+grep -q 'character literal must contain exactly one Unicode code point' build/bad-char.out
 
 # Build extension payload. VSIX is an OPC zip with extension/ payload.
 cp -r vscode-extension build/extension
@@ -41,12 +56,12 @@ TYPES
 (cd build/vsix && zip -qr "$ROOT/dist/$VSIX_NAME" .)
 
 # SDK.
-cp build/latch.exe build/sdk/LatchSDK-1.0-alpha2.5/bin/latch.exe
-cp -r compiler-src lib examples tests assets build/sdk/LatchSDK-1.0-alpha2.5/
-cp -r docs build/sdk/LatchSDK-1.0-alpha2.5/ 2>/dev/null || true
-cp "$ROOT/dist/$VSIX_NAME" build/sdk/LatchSDK-1.0-alpha2.5/vscode-latch/
-cp README.md VERSION build/sdk/LatchSDK-1.0-alpha2.5/
-(cd build/sdk && zip -qr "$ROOT/dist/$SDK_NAME" LatchSDK-1.0-alpha2.5)
+cp build/latch.exe build/sdk/LatchSDK-1.0-alpha2.6/bin/latch.exe
+cp -r compiler-src lib examples tests assets build/sdk/LatchSDK-1.0-alpha2.6/
+cp -r docs build/sdk/LatchSDK-1.0-alpha2.6/ 2>/dev/null || true
+cp "$ROOT/dist/$VSIX_NAME" build/sdk/LatchSDK-1.0-alpha2.6/vscode-latch/
+cp README.md VERSION build/sdk/LatchSDK-1.0-alpha2.6/
+(cd build/sdk && zip -qr "$ROOT/dist/$SDK_NAME" LatchSDK-1.0-alpha2.6)
 
 # Manifest consumed by installed Latch extension.
 cat > dist/release-manifest.json <<JSON

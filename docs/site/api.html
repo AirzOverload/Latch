@@ -1,2 +1,17 @@
-<!doctype html><html><head><meta charset="utf-8"><title>API — Latch</title><link rel="stylesheet" href="style.css"></head><body><header><img src="../../assets/latch-logo.png"><h1>Standard API</h1></header><nav><a href="index.html">About</a><a href="language.html">Language</a><a href="api.html">API</a><a href="examples.html">Examples</a><a href="status.html">Status</a></nav><main><h1>Built-ins</h1><h2 id="println">println</h2><div class="card"><pre>public native void println(value)</pre><div class="meta"><b>Namespace</b><span>latch.std.io</span><b>Kind</b><span>Native function</span><b>Effects</b><span>io(stdout)</span><b>Returns</b><span>void</span></div><p>Writes the textual representation of a value followed by a newline.</p><pre>println("Hello, Latch!");
-println(42);</pre></div><h2 id="len">len</h2><div class="card"><pre>public native int len(value)</pre><div class="meta"><b>Namespace</b><span>latch.std.core</span><b>Effects</b><span>none</span><b>Returns</b><span>int</span></div><p>Returns the number of elements in a supported string or array value.</p></div></main></body></html>
+<!doctype html><html><head><meta charset="utf-8"><title>Latch API Reference</title><link rel="stylesheet" href="style.css"></head><body><main><h1>Latch API Reference — Alpha 2.6</h1><p>Built-in type APIs are part of the standard Latch programming surface. Hover a method in VS Code for its signature and summary.</p><h2>string</h2><pre>int length
+string toUpper()
+string toLower()
+bool startsWith(string prefix)
+bool endsWith(string suffix)
+bool contains(string value)
+string substring(int start, int end)
+char charAt(int index)
+string toString()</pre><h2>char</h2><pre>string toString()
+bool isLetter()
+bool isDigit()
+char toUpper()
+char toLower()</pre><p>Character literals use single quotes and contain exactly one Unicode code point: <code>'A'</code>, <code>'λ'</code>, <code>'\n'</code>. Strings use double quotes.</p><h2>Numeric and boolean types</h2><pre>int.toString()
+float.toString()
+bool.toString()</pre><h2>Collections</h2><pre>List&lt;T&gt;: count, length, add, removeAt, contains, clear
+Map&lt;K,V&gt;: count, length, set, get, containsKey, remove, clear
+Set&lt;T&gt;: count, length, add, contains, remove, clear</pre></main></body></html>

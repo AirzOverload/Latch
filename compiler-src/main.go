@@ -148,6 +148,7 @@ func (x *Lexer) adv() {
 
 type Expr interface{}
 type Lit struct{ V any }
+type CharVal struct{ V string }
 type Name struct{ N string }
 type Unary struct {
 	Op string
@@ -801,9 +802,16 @@ func (p *Parser) primary() (Expr, error) {
 		v, _ := strconv.Atoi(t.S)
 		return &Lit{v}, nil
 	}
-	if t.K == "str" || t.K == "char" {
+	if t.K == "str" {
 		p.i++
 		return &Lit{t.S}, nil
+	}
+	if t.K == "char" {
+		p.i++
+		if len([]rune(t.S)) != 1 {
+			return nil, p.err("character literal must contain exactly one Unicode code point")
+		}
+		return &Lit{CharVal{t.S}}, nil
 	}
 	if p.word("true") {
 		p.i++
@@ -1254,6 +1262,15 @@ func (v *VM) eval(x Expr, e *Env) (any, error) {
 			return nil, er
 		}
 		switch z := o.(type) {
+		case string:
+			if q.N == "length" {
+				return len([]rune(z)), nil
+			}
+			return &NativeMethod{z, q.N}, nil
+		case CharVal:
+			return &NativeMethod{z, q.N}, nil
+		case int, float64, bool:
+			return &NativeMethod{o, q.N}, nil
 		case *ListVal:
 			if q.N == "count" || q.N == "length" {
 				return len(z.X), nil
@@ -1358,7 +1375,7 @@ func (v *VM) eval(x Expr, e *Env) (any, error) {
 		case *Class:
 			return v.newObj(z.Name, q.Args, e)
 		case *NativeMethod:
-			return v.collectionCall(z, a)
+			return v.nativeCall(z, a)
 		case string:
 			_ = z
 		}
@@ -1523,7 +1540,76 @@ func collectionMutator(n string) bool {
 	return n == "add" || n == "remove" || n == "removeAt" || n == "clear" || n == "set"
 }
 
-func (v *VM) collectionCall(m *NativeMethod, a []any) (any, error) {
+func (v *VM) nativeCall(m *NativeMethod, a []any) (any, error) {
+	switch z := m.O.(type) {
+	case string:
+		switch m.N {
+		case "length":
+			return len([]rune(z)), nil
+		case "toUpper":
+			return strings.ToUpper(z), nil
+		case "toLower":
+			return strings.ToLower(z), nil
+		case "startsWith":
+			if len(a) != 1 {
+				return nil, fmt.Errorf("string.startsWith expects 1 argument")
+			}
+			return strings.HasPrefix(z, show(a[0])), nil
+		case "endsWith":
+			if len(a) != 1 {
+				return nil, fmt.Errorf("string.endsWith expects 1 argument")
+			}
+			return strings.HasSuffix(z, show(a[0])), nil
+		case "contains":
+			if len(a) != 1 {
+				return nil, fmt.Errorf("string.contains expects 1 argument")
+			}
+			return strings.Contains(z, show(a[0])), nil
+		case "substring":
+			if len(a) != 2 {
+				return nil, fmt.Errorf("string.substring expects 2 arguments")
+			}
+			r := []rune(z)
+			a0, a1 := int(num(a[0])), int(num(a[1]))
+			if a0 < 0 || a1 < a0 || a1 > len(r) {
+				return nil, fmt.Errorf("substring range out of bounds")
+			}
+			return string(r[a0:a1]), nil
+		case "charAt":
+			if len(a) != 1 {
+				return nil, fmt.Errorf("string.charAt expects 1 argument")
+			}
+			r := []rune(z)
+			i := int(num(a[0]))
+			if i < 0 || i >= len(r) {
+				return nil, fmt.Errorf("string index out of range")
+			}
+			return CharVal{string(r[i])}, nil
+		case "toString":
+			return z, nil
+		}
+	case CharVal:
+		switch m.N {
+		case "toString":
+			return z.V, nil
+		case "isLetter":
+			rr := []rune(z.V)
+			return len(rr) == 1 && unicode.IsLetter(rr[0]), nil
+		case "isDigit":
+			rr := []rune(z.V)
+			return len(rr) == 1 && unicode.IsDigit(rr[0]), nil
+		case "toUpper":
+			rr := []rune(z.V)
+			return CharVal{string(unicode.ToUpper(rr[0]))}, nil
+		case "toLower":
+			rr := []rune(z.V)
+			return CharVal{string(unicode.ToLower(rr[0]))}, nil
+		}
+	case int, float64, bool:
+		if m.N == "toString" {
+			return show(z), nil
+		}
+	}
 	switch z := m.O.(type) {
 	case *ListVal:
 		switch m.N {
@@ -1739,6 +1825,8 @@ func show(x any) string {
 	switch z := x.(type) {
 	case nil:
 		return "null"
+	case CharVal:
+		return z.V
 	case float64:
 		if z == float64(int(z)) {
 			return strconv.Itoa(int(z))
@@ -1857,6 +1945,16 @@ func (s *Sem) method(c *Class, n string) *Fn {
 	}
 	return nil
 }
+func nativeMemberType(t, n string) (string, bool) {
+	m := map[string]map[string]string{
+		"string": {"length": "int", "toUpper": "fn:string", "toLower": "fn:string", "startsWith": "fn:bool", "endsWith": "fn:bool", "contains": "fn:bool", "substring": "fn:string", "charAt": "fn:char", "toString": "fn:string"},
+		"char":   {"toString": "fn:string", "isLetter": "fn:bool", "isDigit": "fn:bool", "toUpper": "fn:char", "toLower": "fn:char"},
+		"int":    {"toString": "fn:string"}, "float": {"toString": "fn:string"}, "bool": {"toString": "fn:string"},
+	}
+	x, ok := m[t][n]
+	return x, ok
+}
+
 func (s *Sem) expr(x Expr, e *SemEnv) string {
 	switch q := x.(type) {
 	case *Lit:
@@ -1869,6 +1967,8 @@ func (s *Sem) expr(x Expr, e *SemEnv) string {
 			return "bool"
 		case string:
 			return "string"
+		case CharVal:
+			return "char"
 		}
 	case *Name:
 		if t, ok := e.get(q.N); ok {
@@ -1944,12 +2044,15 @@ func (s *Sem) expr(x Expr, e *SemEnv) string {
 				}
 			}
 		}
+		if sig, ok := nativeMemberType(ot, q.N); ok {
+			return sig
+		}
 		c := s.P.Classes[ot]
 		if c == nil {
 			if ot == "array" || strings.HasPrefix(ot, "List") || strings.HasPrefix(ot, "Map") || strings.HasPrefix(ot, "Set") {
 				return "native"
 			}
-			s.errf("member access on non-object type %s", ot)
+			s.errf("%s has no member %s", ot, q.N)
 			return ""
 		}
 		if f, owner := s.field(c, q.N); f != nil {

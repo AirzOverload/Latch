@@ -2,7 +2,7 @@
   "name": "latch-language",
   "displayName": "Latch Language",
   "description": "Language support for Latch",
-  "version": "1.0.0-alpha.2.5",
+  "version": "1.0.0-alpha.2.6",
   "publisher": "latch-lang",
   "engines": {
     "vscode": "^1.85.0"
