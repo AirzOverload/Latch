@@ -1,7 +1,7 @@
 {
-  "version": "1.0.0-alpha.2.4",
+  "version": "1.0.0-alpha.2.5",
   "channel": "alpha",
-  "downloadUrl": "https://github.com/AirzOverload/Latch/releases/download/v1.0.0-alpha.2.4/latch-language-1.0.0-alpha.2.4.vsix",
-  "sdkUrl": "https://github.com/AirzOverload/Latch/releases/download/v1.0.0-alpha.2.4/LatchSDK-1.0-alpha2.4-windows.zip",
-  "notesUrl": "https://github.com/AirzOverload/Latch/releases/tag/v1.0.0-alpha.2.4"
+  "downloadUrl": "https://github.com/AirzOverload/Latch/releases/download/v1.0.0-alpha.2.5/latch-language-1.0.0-alpha.2.5.vsix",
+  "sdkUrl": "https://github.com/AirzOverload/Latch/releases/download/v1.0.0-alpha.2.5/LatchSDK-1.0-alpha2.5-windows.zip",
+  "notesUrl": "https://github.com/AirzOverload/Latch/releases/tag/v1.0.0-alpha.2.5"
 }
